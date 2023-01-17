@@ -4,3 +4,26 @@ spring:
     username: querydsl
     password: 1234
     driver-class-name: oracle.jdbc.driver.OracleDriver
+
+  jpa:
+    hibernate:
+      ddl-auto: create
+    properties:
+      hibernate:
+        #         show_sql: true
+        format_sql: true
+        default_batch_fetch_size: 1
+    open-in-view: true
+
+  data:
+    web:
+      pageable:
+        default-page-size: 10
+        max-page-size: 2000
+        one-indexed-parameters: true
+
+
+logging.level:
+  org.hibernate.SQL: debug
+  org.hibernate.type: trace
+
