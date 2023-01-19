@@ -12,6 +12,7 @@ spring:
       hibernate:
         #         show_sql: true
         format_sql: true
+        use_sql_comments: true  #JPQL 볼수 있음
         default_batch_fetch_size: 1
     open-in-view: true
 
