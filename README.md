@@ -10,9 +10,10 @@
 
 → 동적 쿼리 등의 사용이 편리하다.
 
-![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/86529641-8472-4bac-95fc-296fe6a730e5/Untitled.png)
+![Untitled](https://user-images.githubusercontent.com/56577599/213719219-617705e9-7836-4fa0-85ed-2c19307731c4.png)
 
-![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/50a66586-a423-4c93-a900-fb8208e57875/Untitled.png)
+![Untitled (1)](https://user-images.githubusercontent.com/56577599/213719279-8214a165-415c-4758-b067-44975ffb36ce.png)
+
 
 ```java
 package study.querydsl.entity;
