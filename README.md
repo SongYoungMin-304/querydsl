@@ -1184,3 +1184,330 @@ select
         where
             member0_.username=?
 ```
+
+
+
+# 2023.01.21
+
+### 1) 프로젝션 결과 값 반환(기본)
+
+```java
+@Test
+    public void simpleProjection(){
+        List<String> result = jpaQueryFactory
+                .select(member.username)
+                .from(member)
+                .fetch();
+
+        for (String s : result) {
+            System.out.println(s);
+        }
+    }
+
+@Test
+    public void tupleProjection(){
+        List<Tuple> result = jpaQueryFactory
+                .select(member.username, member.age)
+                .from(member)
+                .fetch();
+
+        for (Tuple tuple : result) {
+            String username = tuple.get(member.username);
+            Integer age = tuple.get(member.age);
+
+            System.out.println(username);
+            System.out.println(age);
+        }
+    }
+```
+
+→ 단건은 String으로 반환, 여러 건은 Tuple로 반환해서 사용
+
+`tuple 도 queryDsl 에 종속적이여서.. 서비스나 controller 등에서 호출하지 말자`
+
+### 2) 프로젝션 결과 값 반환(DTO)
+
+AS-IS
+
+```java
+@Test
+    public void findDtoByJPQL(){
+        List<MemberDto> resultList = 
+em.createQuery("select new study.querydsl.dto.MemberDto(m.username, m.age) "+
+"from Member m", MemberDto.class)
+                .getResultList();
+
+        for (MemberDto memberDto : resultList) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ JPQL을 통해서 데이터를 생성자 방식으로 가져와야 하는 데 불편함 존재
+
+TO-BE
+
+CASE1) 프로퍼티 접근
+
+```java
+@Test
+    public void findDtoBySetter(){
+        List<MemberDto> result = jpaQueryFactory
+                .select(Projections.bean(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ Getter Setter 필요함
+
+CASE2) 필드 직접 주입
+
+```java
+@Test
+    public void findDtoByField(){
+        List<MemberDto> result = jpaQueryFactory
+                .select(Projections.fields(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ Getter Setter 필요없음
+
+CASE3) 생성자 주입
+
+```java
+@Test
+    public void findDtoByConstructor(){
+        List<MemberDto> result = jpaQueryFactory
+                .select(Projections.constructor(MemberDto.class,
+                        member.username,
+                        member.age))
+                .from(member)
+                .fetch();
+
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ 생성자 방식으로 처리
+
+CASE4) SELECT 서브 쿼리
+
+```java
+@Test
+    public void findUserDto(){
+
+        QMember memberSub = new QMember("memberSub");
+
+        List<UserDto> result = jpaQueryFactory
+                .select(Projections.fields(UserDto.class,
+                        member.username.as("name"),
+
+                        ExpressionUtils.as(JPAExpressions
+                                .select(memberSub.age.max()).
+                                from(memberSub), "age")
+                ))
+                .from(member)
+                .fetch();
+
+        for (UserDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ [ExpressionUtils.as](http://ExpressionUtils.as) 방식으로 alias를 주는 방식
+
+→ .as 사용가능
+
+CASE5) DTO를 큐로 만들기
+
+```java
+@QueryProjection
+    public MemberDto(String username, int age) {
+        this.username = username;
+        this.age = age;
+    }
+
+@Test
+    public void findDtoByQueryProjection(){
+        List<MemberDto> result = jpaQueryFactory
+                .select(new QMemberDto(member.username, member.age))
+                .from(member)
+                .fetch();
+
+        for (MemberDto memberDto : result) {
+            System.out.println(memberDto);
+        }
+    }
+```
+
+→ DTO에 @QueryProjection 을 하면 QMemberDto 파일이 생성된다.
+
+→ 간단하게 사용 가능 하나.. queryDsl 종속적인 라이브러리를 dto에 써도 될지에 대한 의문이 존재
+
+### 3) 동적 쿼리_BooleanBuilder
+
+```java
+@Test
+    public void dynamicQuery_BooleanBuilder(){
+        String usernameParam = "member1";
+        Integer ageParam = null;
+
+        List<Member> result = searchMember1(usernameParam, ageParam);
+        assertThat(result.size()).isEqualTo(1);
+    }
+
+    private List<Member> searchMember1(String usernameParam, Integer ageParam) {
+
+        BooleanBuilder builder = new BooleanBuilder();
+        if(usernameParam != null){
+            builder.and(member.username.eq(usernameParam));
+        }
+        if(ageParam != null){
+            builder.and(member.age.eq(ageParam));
+        }
+        return jpaQueryFactory
+                .selectFrom(member)
+                .where(builder)
+                .fetch();
+    }
+```
+
+→ builder를 통한 동적쿼리 처리
+
+### 4) 동적 쿼리_다중Param
+
+```java
+@Test
+    public void dynamicQuery_WhereParam(){
+        String usernameParam = "member1";
+        Integer ageParam = null;
+
+        List<Member> result = searchMember2(usernameParam, ageParam);
+        assertThat(result.size()).isEqualTo(1);
+    }
+
+    private List<Member> searchMember2(String usernameParam, Integer ageParam) {
+        return jpaQueryFactory
+                .selectFrom(member)
+//                .where(usernameEq(usernameParam), ageEq(ageParam))
+                .where(allEq(usernameParam, ageParam))
+                .fetch();
+    }
+
+    private BooleanExpression usernameEq(String usernameParam) {
+        return usernameParam != null ? member.username.eq(usernameParam) : null;
+    }
+
+    private BooleanExpression ageEq(Integer ageParam) {
+        return ageParam != null ? member.age.eq(ageParam) : null;
+    }
+
+    // 광소 상태 isValid, 날짜가 IN : isServicable
+
+    private Predicate allEq(String usernameCond, Integer ageCond){
+        return usernameEq(usernameCond).and(ageEq(ageCond));
+    }
+```
+
+→ BooleanExpression 반환 값으로 where 값에 넘긴다.
+
+→ 해당 조건들을 allEq 처럼 조합해서 사용가능
+
+### 5) 벌크성 처리
+
+```java
+@Test
+    public void bulkUpdate(){
+
+        //member1 = 10 -> DB member1
+        //member2 = 20 -> DB member2
+        //member3 = 30 -> DB member3
+        //member4 = 40 -> DB member4
+
+        long count = jpaQueryFactory
+                .update(member)
+                .set(member.username, "비회원")
+                .where(member.age.lt(28))
+                .execute();
+
+        // 벌크형 쿼리는 영속성 컨데이터를 건드리지 않는다.
+
+        //1 member1 = 10 -> DB 비회원
+        //2 member2 = 20 -> DB 비회원
+        //3 member3 = 30 -> DB member3
+        //4 member4 = 40 -> DB member4
+
+        em.flush();
+        em.clear();
+
+        List<Member> fetch = jpaQueryFactory
+                .selectFrom(member)
+                .fetch();
+
+        for (Member fetch1 : fetch) {
+            System.out.println(fetch1);
+        }
+
+    }
+
+    @Test
+    public void bulkAdd(){
+        long execute = jpaQueryFactory
+                .update(member)
+                .set(member.age, member.age.multiply(2))
+                .execute();
+    }
+
+    @Test
+    public void bulkDelete(){
+        long execute = jpaQueryFactory
+                .delete(member)
+                .where(member.age.gt(10))
+                .execute();
+    }
+```
+
+→ 벌크성 처리는 영속성 관리가 되지 않은 상태이기 때문에 재 조회를 해도 변경 전 데이터를 가져오게 되는 상황이 있어서 수정 시
+
+em.flush() em.clear() 를하자
+
+### 6) 벌크성 처리
+
+```java
+@Test
+    public void sqlFunction2(){
+        List<String> fetch = jpaQueryFactory
+                .select(member.username)
+                .from(member)
+/*
+                .where(member.username.eq(
+                        Expressions.stringTemplate("function('lower', {0})", member.username)))
+*/
+                .where(member.username.eq(member.username.lower()))
+                .fetch();
+
+        for (String s : fetch) {
+            System.out.println(s);
+        }
+    }
+```
+
+Expressions.stringTemplate 방식으로 function 사용 가능하나 기본적인 함수는 lower 처럼 존재한다.
