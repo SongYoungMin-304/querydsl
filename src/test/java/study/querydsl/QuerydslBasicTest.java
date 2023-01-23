@@ -534,6 +534,7 @@ public class QuerydslBasicTest {
                 .from(member)
                 .fetch();
 
+
         for (Tuple tuple : result) {
             String username = tuple.get(member.username);
             Integer age = tuple.get(member.age);
@@ -679,7 +680,6 @@ public class QuerydslBasicTest {
                 .selectFrom(member)
                 .where(builder)
                 .fetch();
-
     }
 
     // where 다중 파라미터 사용
