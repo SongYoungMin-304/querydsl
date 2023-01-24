@@ -1729,7 +1729,8 @@ private BooleanExpression ageBetween(int a, int b){
 
 ### JPA DATA VS QUERYDSL
 
-![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/f334c717-3681-4c6a-80fd-0ce6c6fa2584/Untitled.png)
+![화면 캡처 2023-01-24 120512](https://user-images.githubusercontent.com/56577599/214204282-dea7acf0-ac11-4a3f-a4e4-899e0e255e41.png)
+
 
 1) 기본 스프링 JPA
 
