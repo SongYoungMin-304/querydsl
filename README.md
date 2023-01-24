@@ -1723,3 +1723,167 @@ private BooleanExpression ageBetween(int a, int b){
     }
 // 이런식으로 합쳐서 사용 할 수 도 있다.
 ```
+
+
+# 2023.01.24
+
+### JPA DATA VS QUERYDSL
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/f334c717-3681-4c6a-80fd-0ce6c6fa2584/Untitled.png)
+
+1) 기본 스프링 JPA
+
+```java
+public interface MemberRepository extends JpaRepository<Member, Long>, MemberRepositoryCustom {
+
+    // select m from Member m where m.username = ?
+    List<Member> findByUsername(String username);
+
+}
+```
+
+2) 쿼리 DSL 사용 처리
+
+```java
+public interface MemberRepositoryCustom {
+    List<MemberTeamDto> search(MemberSearchCondition condition);
+    Page<MemberTeamDto> searchPageSimple(MemberSearchCondition condition, Pageable pageable);
+    Page<MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable);
+}
+```
+
+```java
+public class MemberRepositoryImpl implements MemberRepositoryCustom{
+
+    private final JPAQueryFactory queryFactory;
+
+    public MemberRepositoryImpl(EntityManager em){
+        this.queryFactory = new JPAQueryFactory(em);
+    }
+
+    @Override
+    public List<MemberTeamDto> search(MemberSearchCondition condition){
+
+        return queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .fetch();
+    }
+}
+```
+
+→ 클래스명을 Impl 붙이는 식으로 구현하면 알아서 해당 클래스가 주입된다.
+
+3) 페이징 처리 - 기본
+
+```java
+@Override
+    public Page<MemberTeamDto> searchPageSimple(MemberSearchCondition condition, Pageable pageable) {
+        QueryResults<MemberTeamDto> results = queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetchResults();
+
+        List<MemberTeamDto> content = results.getResults();
+        long total = results.getTotal();
+
+        return new PageImpl<>(content, pageable, total);
+    }
+```
+
+4) 페이징 처리 - 활용
+
+```java
+@Override
+    public Page<MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable) {
+        List<MemberTeamDto> content = getFetch(condition, pageable);
+
+        long total = getTotal(condition, pageable);
+        JPAQuery<Member> count = getCount(condition, pageable);
+
+        // count 구할 필요가 없을 때는 실제로 돌리지 않는다.
+        return PageableExecutionUtils.getPage(content, pageable, count::fetchCount);
+        //return new PageImpl<>(content, pageable, total);
+    }
+
+    private List<MemberTeamDto> getFetch(MemberSearchCondition condition, Pageable pageable) {
+        return queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+    }
+
+    private long getTotal(MemberSearchCondition condition, Pageable pageable) {
+        return queryFactory
+                .select(member)
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetchCount();
+    }
+
+    private JPAQuery<Member> getCount(MemberSearchCondition condition, Pageable pageable) {
+        return queryFactory
+                .select(member)
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize());
+    }
+```
