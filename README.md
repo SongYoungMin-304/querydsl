@@ -1511,3 +1511,215 @@ em.flush() em.clear() 를하자
 ```
 
 Expressions.stringTemplate 방식으로 function 사용 가능하나 기본적인 함수는 lower 처럼 존재한다.
+
+
+# 2023.01.23
+
+
+### 1) QUERYDSL 정리
+
+**case1) 일반**
+
+AS-IS) 기본 JPA
+
+```java
+private final EntityManager em;
+
+public List<Member> findAll(){
+     return em.createQuery("select m from Member m", Member.class)
+             .getResultList();
+}
+```
+
+→ em을 사용해서 쿼리 작성
+
+TO-BE) QUERYDSL
+
+```java
+@Bean
+JPAQueryFactory jpaQueryFactory(EntityManager em){
+     return new JPAQueryFactory(em);
+}
+
+public MemberJpaRepository(EntityManager em, JPAQueryFactory queryFactory) {
+        this.em = em;
+        this.queryFactory = queryFactory;
+    }
+
+// Bean 주입을 안하는 경우
+public MemberJpaRepository(EntityManager em){
+        this.em = em;
+        this.queryFactory = new JPAQueryFactory(em);
+}
+
+public List<Member> findAll_Querydsl(){
+     return queryFactory
+              .selectFrom(member)
+//              .selectFrom(QMember.member)  // staticImport
+              .fetch();
+```
+
+- static import 란?
+
+```java
+public class staticTest {
+    public static String song ="songTest";
+}
+
+~~~~~~~~
+
+import static study.querydsl.controller.staticTest.song;
+
+staticTest.song;
+
+song; // static import를 하면 사용 가능
+
+```
+
+**case2) 일반(검색 조건 존재)**
+
+AS-IS) 기본 JPA
+
+```java
+public List<Member> findByUsername(String username){
+        return em.createQuery("select m from Member m " +
+                "where m.username = :username", Member.class)
+                .setParameter("username", username)
+                .getResultList();
+    }
+```
+
+TO-BE) QUERYDSL
+
+```java
+public List<Member> findByUsername_Querydsl(String username) {
+        return queryFactory
+                .selectFrom(member)
+                .where(member.username.eq(username))
+                .fetch();
+    }
+```
+
+**case3) 조건 검색 - Builder 처리**
+
+```java
+package study.querydsl.dto;
+
+import com.querydsl.core.annotations.QueryProjection;
+import lombok.Data;
+
+@Data
+public class MemberTeamDto {
+    private Long memberId;
+    private String username;
+    private int age;
+    private Long teamId;
+    private String teamName;
+
+    @QueryProjection
+    public MemberTeamDto(Long memberId, String username, int age, Long teamId, String teamName) {
+        this.memberId = memberId;
+        this.username = username;
+        this.age = age;
+        this.teamId = teamId;
+        this.teamName = teamName;
+    }
+}
+```
+
+→ QueryProjection 을 통해서 Q파일 생성
+
+```java
+package study.querydsl.dto;
+
+import lombok.Data;
+
+@Data
+public class MemberSearchCondition {
+    //회원명, 팀명, 나이(ageCoe, ageLoe)
+
+    private String username;
+    private String teamName;
+    private Integer ageGoe;
+    private Integer ageLoe;
+}
+```
+
+```java
+BooleanBuilder builder = new BooleanBuilder();
+if(hasText(condition.getUsername())) {
+     builder.and(member.username.eq(condition.getUsername()));
+}
+if(hasText(condition.getTeamName())) {
+     builder.and(team.name.eq(condition.getTeamName()));
+}
+if(condition.getAgeGoe()!=null){
+     builder.and(member.age.goe(condition.getAgeGoe()));
+}
+if(condition.getAgeLoe()!=null){
+     builder.and(member.age.loe(condition.getAgeLoe()));
+}
+
+public List<MemberTeamDto> searchByBuilder(MemberSearchCondition condition){
+
+     return queryFactory
+             .select(new QMemberTeamDto(
+                    member.id.as("memberId")
+                    member.username,
+                    member.age,
+                    team.id.as("teamId"),
+                    team.name.as("teamName")
+            ))
+            .from(member)
+            .leftJoin(member.team, team)
+            .where(builder)
+            .fetch();
+}
+
+```
+
+**case4) 조건 검색 - 매소드 방식**
+
+```java
+public List<MemberTeamDto> search(MemberSearchCondition condition){
+
+        return queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .fetch();
+    }
+
+private BooleanExpression usernameEq(String username) {
+     return hasText(username) ? member.username.eq(username) : null;
+}
+
+private BooleanExpression teamNameEq(String teamName) {
+     return hasText(teamName) ? team.name.eq(teamNmae) : null;
+}
+
+private BooleanExpression ageGoe(Integer ageGoe) {
+     return ageGoe != null ? member.age.goe(ageGode) : null;
+}
+
+private BooleanExpression ageLoe(Integer ageLoe) {
+     return ageLoe!= null ? member.age.loe(ageLoe) : null;
+}
+
+private BooleanExpression ageBetween(int a, int b){
+        return ageGoe(a).and(ageLoe(b));
+    }
+// 이런식으로 합쳐서 사용 할 수 도 있다.
+```
