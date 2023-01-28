@@ -1888,3 +1888,310 @@ public class MemberRepositoryImpl implements MemberRepositoryCustom{
                 .limit(pageable.getPageSize());
     }
 ```
+
+# 2021.01.28
+
+### 스프링 데이터 JPA가 제공하는 Querydsl 기능
+
+1) 인터페이스 지원 - QuerydslPredicateExecutor
+
+```java
+interface MemberRepository extends JpaRepository<User, Long>, QuerydslPredicateExecutor<User> {
+
+}
+
+```
+
+→ JPA DATA 인터페이스에 QuerydslPredicateExecutor 상속
+
+```java
+Iterable result = memberRepository.findAll(
+      member.age.between(10,40)
+      .and(member.username.eq("member1"))
+);
+```
+
+→ 해당 방식으로 jpql 등을 사용하지 않고 jpa data 를 편리하게 사용할 수 있으나
+
+1. **조인이 어려움**
+2. **서비스 클래스가 Querydsl 에 종속된다(querydsl 등의 기술은 서비스 단이 아닌 repository 단에 종속되는 것이 좋다.**
+
+2) 인터페이스 지원 - QuerydslRepositorySupport
+
+```java
+public class MemberRepositoryImpl extends QuerydslRepositorySupport {
+
+}
+```
+
+AS-IS
+
+```java
+List<MemberDto> result queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .fetch();
+
+QueryResults<MemberTeamDto> results = queryFactory
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ))
+                .from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetchResults();
+```
+
+TO-BE
+
+```java
+List<MemberTeamDto> result = from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                )).fetch();
+
+public Page<MemberTeamDto> searchPageSimple2(MemberSearchCondition condition, Pageable pageable) {
+
+        JPQLQuery<MemberTeamDto> jpaQuery = from(member)
+                .leftJoin(member.team, team)
+                .where(
+                        usernameEq(condition.getUsername()),
+                        teamNameEq(condition.getTeamName()),
+                        ageGoe(condition.getAgeGoe()),
+                        ageLoe(condition.getAgeLoe())
+                )
+                .select(new QMemberTeamDto(
+                        member.id.as("memberId"),
+                        member.username,
+                        member.age,
+                        team.id.as("teamId"),
+                        team.name.as("teamName")
+                ));
+
+        JPQLQuery<MemberTeamDto> query = getQuerydsl().applyPagination(pageable, jpaQuery);
+
+        QueryResults<MemberTeamDto> memberTeamDtoQueryResults = query.fetchResults();
+```
+
+**→ 해당 라이브러리는 SORT 문제, SELECT가 마지막에 가는 등의 문제 가 있어서 사용하기가 어렵다**
+
+**→ 직접 구현해서 편리하게 사용할 수가 있다.**
+
+- **OFFSET LIMIT 등을 applyPagination 등으로 처리할 수 있다.**
+
+3) 추상클래스 만들기 - Querydsl4RepositorySupport
+
+```java
+package study.querydsl.repository.support;
+
+import com.querydsl.core.types.EntityPath;
+import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.dsl.PathBuilder;
+import com.querydsl.jpa.impl.JPAQuery;
+import com.querydsl.jpa.impl.JPAQueryFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.support.JpaEntityInformation;
+import
+        org.springframework.data.jpa.repository.support.JpaEntityInformationSupport;
+import org.springframework.data.jpa.repository.support.Querydsl;
+import org.springframework.data.querydsl.SimpleEntityPathResolver;
+import org.springframework.data.repository.support.PageableExecutionUtils;
+import org.springframework.stereotype.Repository;
+import org.springframework.util.Assert;
+import javax.annotation.PostConstruct;
+import javax.persistence.EntityManager;
+import java.util.List;
+import java.util.function.Function;
+/**
+ * Querydsl 4.x 버전에 맞춘 Querydsl 지원 라이브러리
+ *
+ * @author Younghan Kim
+ * @see
+org.springframework.data.jpa.repository.support.QuerydslRepositorySupport
+ */
+@Repository
+public abstract class Querydsl4RepositorySupport {
+    private final Class domainClass;
+    private Querydsl querydsl;
+    private EntityManager entityManager;
+    private JPAQueryFactory queryFactory;
+    public Querydsl4RepositorySupport(Class<?> domainClass) {
+        Assert.notNull(domainClass, "Domain class must not be null!");
+        this.domainClass = domainClass;
+    }
+    @Autowired
+    public void setEntityManager(EntityManager entityManager) {
+        Assert.notNull(entityManager, "EntityManager must not be null!");
+        JpaEntityInformation entityInformation =
+                JpaEntityInformationSupport.getEntityInformation(domainClass, entityManager);
+        SimpleEntityPathResolver resolver = SimpleEntityPathResolver.INSTANCE;
+        EntityPath path = resolver.createPath(entityInformation.getJavaType());
+        this.entityManager = entityManager;
+        this.querydsl = new Querydsl(entityManager, new
+                PathBuilder<>(path.getType(), path.getMetadata()));
+        this.queryFactory = new JPAQueryFactory(entityManager);
+    }
+    @PostConstruct
+    public void validate() {
+        Assert.notNull(entityManager, "EntityManager must not be null!");
+        Assert.notNull(querydsl, "Querydsl must not be null!");
+        Assert.notNull(queryFactory, "QueryFactory must not be null!");
+    }
+    protected JPAQueryFactory getQueryFactory() {
+        return queryFactory;
+    }
+    protected Querydsl getQuerydsl() {
+        return querydsl;
+    }
+    protected EntityManager getEntityManager() {
+        return entityManager;
+    }
+    protected <T> JPAQuery<T> select(Expression<T> expr) {
+        return getQueryFactory().select(expr);
+    }
+    protected <T> JPAQuery<T> selectFrom(EntityPath<T> from) {
+        return getQueryFactory().selectFrom(from);
+    }
+    protected <T> Page<T> applyPagination(Pageable pageable,
+                                          Function<JPAQueryFactory, JPAQuery> contentQuery) {
+        JPAQuery jpaQuery = contentQuery.apply(getQueryFactory());
+        List<T> content = getQuerydsl().applyPagination(pageable,
+                jpaQuery).fetch();
+        return PageableExecutionUtils.getPage(content, pageable,
+                jpaQuery::fetchCount);
+    }
+    protected <T> Page<T> applyPagination(Pageable pageable,
+                                          Function<JPAQueryFactory, JPAQuery> contentQuery, Function<JPAQueryFactory,
+            JPAQuery> countQuery) {
+        JPAQuery jpaContentQuery = contentQuery.apply(getQueryFactory());
+        List<T> content = getQuerydsl().applyPagination(pageable,
+                jpaContentQuery).fetch();
+        JPAQuery countResult = countQuery.apply(getQueryFactory());
+        return PageableExecutionUtils.getPage(content, pageable,
+                countResult::fetchCount);
+    }
+}
+```
+
+```java
+protected JPAQueryFactory getQueryFactory() {
+        return queryFactory;
+    }
+
+protected<T> JPAQuery<T> select(Expression<T> expr){
+     return getQueryFactory().select(expr);
+    }
+
+protected <T> JPAQuery<T> selectFrom(EntityPath<T> from) {
+        return getQueryFactory().selectFrom(from);
+    }
+
+~~~~~~~~~~~~~~~~~~~~
+
+// 사용예제
+
+public List<Member> basicSelect(){
+        return select(member)
+                .from(member)
+                .fetch();
+    }
+
+    public List<Member> basicSelectFrom(){
+        return selectFrom(member)
+                .fetch();
+    }
+```
+
+→ select 와 selectFrom 기능 개발
+
+```java
+protected <T> Page<T> applyPagination(Pageable pageable,
+                                          Function<JPAQueryFactory, JPAQuery> contentQuery) {
+        JPAQuery jpaQuery = contentQuery.apply(getQueryFactory());
+        List<T> content = getQuerydsl().applyPagination(pageable,
+                jpaQuery).fetch();
+        return PageableExecutionUtils.getPage(content, pageable,
+                jpaQuery::fetchCount);
+    }
+    protected <T> Page<T> applyPagination(Pageable pageable,
+                                          Function<JPAQueryFactory, JPAQuery> contentQuery, Function<JPAQueryFactory,
+            JPAQuery> countQuery) {
+        JPAQuery jpaContentQuery = contentQuery.apply(getQueryFactory());
+        List<T> content = getQuerydsl().applyPagination(pageable,
+                jpaContentQuery).fetch();
+        JPAQuery countResult = countQuery.apply(getQueryFactory());
+        return PageableExecutionUtils.getPage(content, pageable,
+                countResult::fetchCount);
+    }
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+public Page<Member> applyPagination(MemberSearchCondition condition, Pageable pageable){
+        return super.applyPagination(pageable, query ->
+                query.selectFrom(member)
+                        .leftJoin(member.team, team)
+                        .where(usernameEq(condition.getUsername()),
+                                teamNameEq(condition.getTeamName()),
+                                ageGoe(condition.getAgeGoe()),
+                                ageLoe(condition.getAgeLoe())
+                        )
+        );
+
+public Page<Member> applyPagination2(MemberSearchCondition condition, Pageable pageable){
+        return super.applyPagination(pageable, contentQuery ->
+                contentQuery.selectFrom(member)
+                        .leftJoin(member.team, team)
+                        .where(usernameEq(condition.getUsername()),
+                                teamNameEq(condition.getTeamName()),
+                                ageGoe(condition.getAgeGoe()),
+                                ageLoe(condition.getAgeLoe())
+                        ), countQuery -> countQuery
+                .select(member.id)
+                .from(member)
+                .leftJoin(member.team, team)
+                        .where(usernameEq(condition.getUsername()),
+                                teamNameEq(condition.getTeamName()),
+                                ageGoe(condition.getAgeGoe()),
+                                ageLoe(condition.getAgeLoe())
+        ));
+
+```
+
+→ applyPagination 등을 보다 자연스럽게 사용할 수 있도록 추상 클래스를 만듬
